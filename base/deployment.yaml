@@ -2,11 +2,10 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: nginx-demo
-  namespace: demo-app
   labels:
     app: nginx-demo
 spec:
-  replicas: 1
+  replicas: 1          # base default, overlays will override
   selector:
     matchLabels:
       app: nginx-demo
@@ -17,7 +16,7 @@ spec:
     spec:
       containers:
       - name: nginx
-        image: nginxdemos/hello:latest   # Public demo image with a nice web UI
+        image: nginxdemos/hello:latest
         ports:
         - containerPort: 80
         resources:
