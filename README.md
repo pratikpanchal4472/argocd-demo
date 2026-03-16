@@ -285,7 +285,13 @@ ArgoCD detects the new commits on each branch and auto-syncs the corresponding a
 
 All 3 apps visible in ArgoCD — each independently tracking its own branch and overlay:
 
-![ArgoCD — all 3 environment apps](images/environment-support.png)
+![ArgoCD — all 3 environment apps](images/app-per-environment.png)
+
+![ArgoCD — dev environment](images/environments/dev.png)
+
+![ArgoCD — staging environment](images/environments/staging.png)
+
+![ArgoCD — prod environment](images/environments/prod.png)
 
 ---
 
