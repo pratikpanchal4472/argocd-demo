@@ -75,14 +75,26 @@ argocd login localhost:8080 \
 
 ## Step 4 — App Manifests (this repo)
 
-The [`nginx-app/`](nginx-app/) directory contains all Kubernetes manifests:
+This repo uses two manifest layouts:
+
+**Single-environment** (original, used for the initial `nginx-demo` prod app):
 
 | File | Purpose |
 |---|---|
-| `namespace.yaml` | Creates the `demo-app` namespace |
-| `deployment.yaml` | nginx demo app (`nginxdemos/hello:latest`), 1 replica |
-| `service.yaml` | `NodePort` Service on port 80 |
-| `hpa.yaml` | HPA: 1–6 replicas at 50% CPU |
+| [`nginx-app/namespace.yaml`](nginx-app/namespace.yaml) | Creates the `demo-app` namespace |
+| [`nginx-app/deployment.yaml`](nginx-app/deployment.yaml) | nginx demo app (`nginxdemos/hello:latest`), 1 replica |
+| [`nginx-app/service.yaml`](nginx-app/service.yaml) | `NodePort` Service on port 80 |
+| [`nginx-app/hpa.yaml`](nginx-app/hpa.yaml) | HPA: 1–6 replicas at 50% CPU |
+
+**Multi-environment** (Kustomize base + overlays, see [Step 9](#step-9--multi-environment-support-with-kustomize)):
+
+```
+base/                   # shared manifests (deployment, service, hpa)
+overlays/
+├── dev/                # branch: dev    → namespace: demo-dev
+├── staging/            # branch: staging → namespace: demo-staging
+└── prod/               # branch: main   → namespace: demo-prod
+```
 
 ---
 
@@ -202,18 +214,94 @@ ArgoCD performs a rolling update with zero downtime.
 
 ---
 
+## Step 9 — Multi-Environment Support with Kustomize
+
+The repo is structured with a shared [`base/`](base/) and per-environment [`overlays/`](overlays/). Each environment tracks its own Git branch, so changes to `dev` never touch `staging` or `prod`.
+
+### Branch → Environment Mapping
+
+| Environment | Branch | Path | Namespace | Replicas | HPA Range | Image Tag |
+|---|---|---|---|---|---|---|
+| dev | `dev` | `overlays/dev` | `demo-dev` | 1 | 1–2 | `latest` |
+| staging | `staging` | `overlays/staging` | `demo-staging` | 2 | 2–4 | `plain-text` |
+| prod | `main` | `overlays/prod` | `demo-prod` | 4 | 3–6 | `0.4` (pinned) |
+
+Prod also has elevated resource limits (`500m CPU / 256Mi memory`) patched over the base defaults.
+
+### Create ArgoCD Apps for All Environments
+
+```bash
+# dev — tracks the dev branch
+argocd app create nginx-dev \
+  --repo https://github.com/<your-username>/argocd-demo \
+  --path overlays/dev \
+  --revision dev \
+  --dest-server https://kubernetes.default.svc \
+  --dest-namespace demo-dev \
+  --sync-policy automated \
+  --auto-prune \
+  --self-heal
+
+# staging — tracks the staging branch
+argocd app create nginx-staging \
+  --repo https://github.com/<your-username>/argocd-demo \
+  --path overlays/staging \
+  --revision staging \
+  --dest-server https://kubernetes.default.svc \
+  --dest-namespace demo-staging \
+  --sync-policy automated \
+  --auto-prune \
+  --self-heal
+
+# prod — tracks main
+argocd app create nginx-prod \
+  --repo https://github.com/<your-username>/argocd-demo \
+  --path overlays/prod \
+  --revision main \
+  --dest-server https://kubernetes.default.svc \
+  --dest-namespace demo-prod \
+  --sync-policy automated \
+  --auto-prune \
+  --self-heal
+```
+
+### Promote a Change Across Environments
+
+The standard promotion flow is `dev → staging → prod` via Git merges:
+
+```bash
+# Promote dev → staging
+git checkout staging
+git merge dev
+git push origin staging
+
+# Promote staging → prod
+git checkout main
+git merge staging
+git push origin main
+```
+
+ArgoCD detects the new commits on each branch and auto-syncs the corresponding app.
+
+All 3 apps visible in ArgoCD — each independently tracking its own branch and overlay:
+
+![ArgoCD — all 3 environment apps](images/environment-support.png)
+
+---
+
 ## Quick Reference
 
 | Action | Command |
 |---|---|
-| Check app status | `argocd app get nginx-demo` |
-| Force sync | `argocd app sync nginx-demo` |
-| List apps | `argocd app list` |
-| Watch pods | `kubectl get pods -n demo-app -w` |
-| Check HPA | `kubectl get hpa -n demo-app` |
-| Delete app | `argocd app delete nginx-demo` |
+| List all apps | `argocd app list` |
+| Check app status | `argocd app get <app-name>` |
+| Force sync | `argocd app sync <app-name>` |
+| Watch pods (prod) | `kubectl get pods -n demo-prod -w` |
+| Watch pods (dev) | `kubectl get pods -n demo-dev -w` |
+| Check HPA | `kubectl get hpa -n <namespace>` |
+| Delete app | `argocd app delete <app-name>` |
 | ArgoCD UI | https://localhost:8080 |
-| App UI | http://localhost:8888 (after port-forward) |
+| App UI (port-forward) | `kubectl port-forward svc/nginx-demo-svc -n demo-app 8888:80` |
 
 ---
 
@@ -224,3 +312,5 @@ ArgoCD performs a rolling update with zero downtime.
 - **Auto-prune** — resources deleted from Git are deleted from the cluster
 - **HPA** — Kubernetes-native auto-scaling layered on top, also managed via ArgoCD
 - **Rollback** — point to any prior Git revision via the UI or CLI
+- **Kustomize overlays** — single base, environment-specific patches for replicas, HPA limits, image tags, and resource limits; no manifest duplication
+- **Branch-per-environment** — `dev` → `staging` → `main(prod)` promotion flow via `git merge`
